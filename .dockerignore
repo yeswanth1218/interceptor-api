@@ -23,6 +23,5 @@ ENV/
 # Ignore tests and local development files
 tests/
 README.md
-requirements.txt
 Dockerfile
 .dockerignore
