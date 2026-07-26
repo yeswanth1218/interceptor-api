@@ -66,7 +66,10 @@ class Settings:
         file_values = _read_env_file(env_file)
 
         def value(key: str, default: str = "") -> str:
-            return os.environ.get(key, file_values.get(key, default)).strip()
+            val = os.environ.get(key, file_values.get(key, default)).strip()
+            if (val.startswith('"') and val.endswith('"')) or (val.startswith("'") and val.endswith("'")):
+                val = val[1:-1].strip()
+            return val
 
         required = {
             "UPSTASH_REDIS_REST_URL": value("UPSTASH_REDIS_REST_URL"),
