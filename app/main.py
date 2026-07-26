@@ -72,6 +72,10 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         lifespan=lifespan,
     )
 
+    @app.get("/")
+    async def index() -> dict[str, str]:
+        return {"message": "Simpliby interceptor service is running"}
+
     @app.get("/health")
     async def health() -> dict[str, str]:
         try:
