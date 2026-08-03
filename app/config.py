@@ -13,10 +13,8 @@ DEFAULT_ENV_FILE = SERVICE_DIR / ".env"
 
 
 def _read_env_file(path: Path) -> Dict[str, str]:
-    """Read basic KEY=VALUE values without printing any configuration."""
     if not path.is_file():
         return {}
-
     values: Dict[str, str] = {}
     for raw_line in path.read_text(encoding="utf-8").splitlines():
         line = raw_line.strip()
@@ -37,8 +35,7 @@ def _as_bool(value: str, default: bool) -> bool:
 
 @dataclass(frozen=True)
 class Settings:
-    upstash_redis_rest_url: str
-    upstash_redis_rest_token: str
+    redis_url: str
     meta_verify_token: Optional[str]
     meta_app_secret: Optional[str]
     meta_access_token: Optional[str]
@@ -47,7 +44,6 @@ class Settings:
     inbound_queue_name: str
     outbound_queue_name: str
     outbound_failed_queue_name: str
-    outbound_poll_interval_seconds: float
     outbound_max_attempts: int
     outbound_worker_enabled: bool
     outbound_error_log_cooldown_seconds: float
@@ -67,21 +63,16 @@ class Settings:
 
         def value(key: str, default: str = "") -> str:
             val = os.environ.get(key, file_values.get(key, default)).strip()
-            if (val.startswith('"') and val.endswith('"')) or (val.startswith("'") and val.endswith("'")):
+            if (val.startswith('"') and val.endswith('"')) or (
+                val.startswith("'") and val.endswith("'")
+            ):
                 val = val[1:-1].strip()
             return val
 
-        required = {
-            "UPSTASH_REDIS_REST_URL": value("UPSTASH_REDIS_REST_URL"),
-            "UPSTASH_REDIS_REST_TOKEN": value("UPSTASH_REDIS_REST_TOKEN"),
-        }
-        missing = [key for key, setting in required.items() if not setting]
+        required = {"REDIS_URL": value("REDIS_URL")}
+        missing = [k for k, v in required.items() if not v]
         if missing:
             raise ValueError("Missing required settings: " + ", ".join(missing))
-
-        poll_interval = float(value("OUTBOUND_POLL_INTERVAL_SECONDS", "1"))
-        if poll_interval <= 0:
-            raise ValueError("OUTBOUND_POLL_INTERVAL_SECONDS must be greater than zero")
 
         max_attempts = int(value("OUTBOUND_MAX_ATTEMPTS", "3"))
         if max_attempts < 1:
@@ -92,8 +83,7 @@ class Settings:
             raise ValueError("OUTBOUND_ERROR_LOG_COOLDOWN_SECONDS must be greater than zero")
 
         return cls(
-            upstash_redis_rest_url=required["UPSTASH_REDIS_REST_URL"].rstrip("/"),
-            upstash_redis_rest_token=required["UPSTASH_REDIS_REST_TOKEN"],
+            redis_url=required["REDIS_URL"],
             meta_verify_token=value("META_VERIFY_TOKEN") or None,
             meta_app_secret=value("META_APP_SECRET") or None,
             meta_access_token=value("META_ACCESS_TOKEN") or None,
@@ -104,7 +94,6 @@ class Settings:
             outbound_failed_queue_name=value(
                 "OUTBOUND_FAILED_QUEUE_NAME", "whatsapp:outbound:failed"
             ),
-            outbound_poll_interval_seconds=poll_interval,
             outbound_max_attempts=max_attempts,
             outbound_worker_enabled=_as_bool(value("OUTBOUND_WORKER_ENABLED", "true"), True),
             outbound_error_log_cooldown_seconds=error_log_cooldown,

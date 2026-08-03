@@ -1,8 +1,9 @@
-"""Polling worker that sends outbound queue jobs to Meta."""
+"""Outbound worker — blocks on whatsapp:outbound and delivers via Meta Graph API."""
 
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import time
 from datetime import datetime, timezone
@@ -11,7 +12,7 @@ from uuid import uuid4
 
 from .config import Settings
 from .meta_client import MetaWhatsAppClient
-from .redis_client import UpstashRedis
+from .redis_client import RedisClient
 
 
 logger = logging.getLogger(__name__)
@@ -20,42 +21,38 @@ logger = logging.getLogger(__name__)
 class OutboundWorker:
     def __init__(
         self,
-        redis: UpstashRedis,
+        redis: RedisClient,
         meta: MetaWhatsAppClient,
         settings: Settings,
     ) -> None:
         self._redis = redis
         self._meta = meta
         self._settings = settings
-        self._last_iteration_error_log_at = 0.0
+        self._last_error_log_at = 0.0
 
     async def run(self) -> None:
-        """Continuously poll the configured outbound queue until cancelled."""
-        logger.info("Outbound worker started for queue %s", self._settings.outbound_queue_name)
+        """Block on whatsapp:outbound using BRPOP and deliver each job to Meta."""
+        logger.info(
+            "Outbound worker started (BRPOP) on queue %s",
+            self._settings.outbound_queue_name,
+        )
         while True:
             try:
-                did_process = await self.process_next()
-                if not did_process:
-                    await asyncio.sleep(self._settings.outbound_poll_interval_seconds)
+                job = await self._redis.brpop_json(
+                    self._settings.outbound_queue_name, timeout=30
+                )
+                if job is not None:
+                    await self._process_job(job)
             except asyncio.CancelledError:
                 logger.info("Outbound worker stopped")
                 raise
             except Exception as error:
-                self._log_iteration_error(error)
-                await asyncio.sleep(self._settings.outbound_poll_interval_seconds)
+                self._log_error_throttled(error)
+                await asyncio.sleep(1)
 
-    async def process_next(self) -> bool:
-        """Process at most one job; exposed separately for deterministic tests."""
-        job = await self._redis.rpop_json(self._settings.outbound_queue_name)
-        if job is None:
-            return False
-
+    async def _process_job(self, job: dict[str, Any]) -> None:
         job.setdefault("id", str(uuid4()))
-        logger.info(
-            "Outbound job %s picked from %s",
-            job["id"],
-            self._settings.outbound_queue_name,
-        )
+        logger.info("Outbound job %s picked up", job["id"])
         try:
             recipient, text = self._validate_text_job(job)
             response = await self._meta.send_text(recipient, text)
@@ -67,17 +64,12 @@ class OutboundWorker:
             )
         except Exception as error:
             await self._handle_failure(job, error)
-        return True
 
-    def _log_iteration_error(self, error: Exception) -> None:
-        """Avoid emitting one infrastructure error for every polling interval."""
+    def _log_error_throttled(self, error: Exception) -> None:
         now = time.monotonic()
-        if (
-            now - self._last_iteration_error_log_at
-            >= self._settings.outbound_error_log_cooldown_seconds
-        ):
-            logger.exception("Outbound worker iteration failed: %s", error)
-            self._last_iteration_error_log_at = now
+        if now - self._last_error_log_at >= self._settings.outbound_error_log_cooldown_seconds:
+            logger.exception("Outbound worker error: %s", error)
+            self._last_error_log_at = now
 
     @staticmethod
     def _validate_text_job(job: dict[str, Any]) -> tuple[str, str]:
@@ -95,8 +87,8 @@ class OutboundWorker:
     def _meta_message_id(response: dict[str, Any]) -> str | None:
         messages = response.get("messages")
         if isinstance(messages, list) and messages and isinstance(messages[0], dict):
-            message_id = messages[0].get("id")
-            return message_id if isinstance(message_id, str) else None
+            mid = messages[0].get("id")
+            return mid if isinstance(mid, str) else None
         return None
 
     async def _handle_failure(self, job: dict[str, Any], error: Exception) -> None:
@@ -121,6 +113,4 @@ class OutboundWorker:
             attempt,
             self._settings.outbound_max_attempts,
         )
-        await asyncio.sleep(
-            min(self._settings.outbound_poll_interval_seconds * (2**attempt), 30)
-        )
+        await asyncio.sleep(min(2**attempt, 30))

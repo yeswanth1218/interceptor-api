@@ -17,7 +17,7 @@ from .config import Settings
 from .logging_config import configure_logging
 from .meta_client import MetaWhatsAppClient, signature_is_valid
 from .outbound_worker import OutboundWorker
-from .redis_client import UpstashRedis
+from .redis_client import RedisClient
 
 
 logger = logging.getLogger(__name__)
@@ -29,16 +29,12 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        http_client = httpx.AsyncClient(timeout=httpx.Timeout(15.0))
-        redis = UpstashRedis(
-            http_client,
-            service_settings.upstash_redis_rest_url,
-            service_settings.upstash_redis_rest_token,
-        )
+        redis = RedisClient.from_url(service_settings.redis_url)
         app.state.redis = redis
         outbound_task: Optional[asyncio.Task[None]] = None
 
         if service_settings.outbound_worker_enabled and service_settings.outbound_is_configured:
+            http_client = httpx.AsyncClient(timeout=httpx.Timeout(15.0))
             meta_client = MetaWhatsAppClient(
                 http_client,
                 service_settings.meta_access_token or "",
@@ -51,9 +47,12 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             )
         elif service_settings.outbound_worker_enabled:
             logger.warning(
-                "Outbound worker is disabled until META_ACCESS_TOKEN, "
-                "META_PHONE_NUMBER_ID, and META_GRAPH_API_VERSION are configured"
+                "Outbound worker disabled — META_ACCESS_TOKEN, "
+                "META_PHONE_NUMBER_ID, and META_GRAPH_API_VERSION must all be set"
             )
+            http_client = None
+        else:
+            http_client = None
 
         try:
             yield
@@ -64,7 +63,9 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                     await outbound_task
                 except asyncio.CancelledError:
                     pass
-            await http_client.aclose()
+            if http_client:
+                await http_client.aclose()
+            await redis.close()
 
     app = FastAPI(
         title="Simpliby Interceptor API",
@@ -81,7 +82,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         try:
             await app.state.redis.ping()
         except Exception as error:
-            logger.exception("Upstash health check failed")
+            logger.exception("Redis health check failed")
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Redis unavailable",
