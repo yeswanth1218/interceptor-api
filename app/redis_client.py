@@ -28,7 +28,10 @@ class RedisClient:
         return cls(client)
 
     async def close(self) -> None:
-        await self._r.aclose()
+        if hasattr(self._r, "aclose"):
+            await self._r.aclose()
+        else:
+            await self._r.close()
 
     async def ping(self) -> None:
         await self._r.ping()

@@ -47,6 +47,7 @@ class Settings:
     outbound_max_attempts: int
     outbound_worker_enabled: bool
     outbound_error_log_cooldown_seconds: float
+    testing: bool
     log_level: str
 
     @property
@@ -97,5 +98,6 @@ class Settings:
             outbound_max_attempts=max_attempts,
             outbound_worker_enabled=_as_bool(value("OUTBOUND_WORKER_ENABLED", "true"), True),
             outbound_error_log_cooldown_seconds=error_log_cooldown,
+            testing=_as_bool(value("TESTING", "false"), False),
             log_level=value("LOG_LEVEL", "INFO"),
         )

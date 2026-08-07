@@ -55,8 +55,16 @@ class OutboundWorker:
         logger.info("Outbound job %s picked up", job["id"])
         try:
             recipient, text = self._validate_text_job(job)
-            response = await self._meta.send_text(recipient, text)
-            meta_message_id = self._meta_message_id(response)
+            if self._settings.testing:
+                logger.info(
+                    "Outbound job %s: [TESTING MODE] Bypassing Meta Graph API call. "
+                    "Recipient: %s, Text: %r",
+                    job["id"], recipient, text
+                )
+                meta_message_id = f"mock-wamid-{uuid4()}"
+            else:
+                response = await self._meta.send_text(recipient, text)
+                meta_message_id = self._meta_message_id(response)
             logger.info(
                 "Outbound job %s sent%s",
                 job["id"],
