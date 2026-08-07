@@ -54,16 +54,30 @@ class OutboundWorker:
         job.setdefault("id", str(uuid4()))
         logger.info("Outbound job %s picked up", job["id"])
         try:
-            recipient, text = self._validate_text_job(job)
+            recipient, msg_type = self._validate_job(job)
             if self._settings.testing:
                 logger.info(
                     "Outbound job %s: [TESTING MODE] Bypassing Meta Graph API call. "
-                    "Recipient: %s, Text: %r",
-                    job["id"], recipient, text
+                    "Recipient: %s, Type: %s, Text/Caption: %r",
+                    job["id"], recipient, msg_type, job.get("text")
                 )
                 meta_message_id = f"mock-wamid-{uuid4()}"
             else:
-                response = await self._meta.send_text(recipient, text)
+                if msg_type == "image":
+                    response = await self._meta.send_image(
+                        recipient_phone_e164=recipient,
+                        image_url=job["media_url"],
+                        caption=job.get("text"),
+                    )
+                elif msg_type == "document":
+                    response = await self._meta.send_document(
+                        recipient_phone_e164=recipient,
+                        document_url=job["media_url"],
+                        filename=job.get("filename", "document.pdf"),
+                        caption=job.get("text"),
+                    )
+                else:
+                    response = await self._meta.send_text(recipient, job["text"])
                 meta_message_id = self._meta_message_id(response)
             logger.info(
                 "Outbound job %s sent%s",
@@ -80,16 +94,29 @@ class OutboundWorker:
             self._last_error_log_at = now
 
     @staticmethod
-    def _validate_text_job(job: dict[str, Any]) -> tuple[str, str]:
-        if job.get("message_type", "text") != "text":
-            raise ValueError("Only text outbound jobs are supported in this POC")
+    def _validate_job(job: dict[str, Any]) -> tuple[str, str]:
         recipient = job.get("to")
-        text = job.get("text")
         if not isinstance(recipient, str) or not recipient.strip():
             raise ValueError("Outbound job requires a non-empty 'to' phone number")
-        if not isinstance(text, str) or not text.strip():
-            raise ValueError("Outbound job requires non-empty 'text'")
-        return recipient, text
+
+        msg_type = job.get("message_type", "text")
+        if msg_type not in ("text", "image", "document"):
+            raise ValueError(f"Unsupported message type: {msg_type}")
+
+        if msg_type == "text":
+            text = job.get("text")
+            if not isinstance(text, str) or not text.strip():
+                raise ValueError("Text outbound job requires a non-empty 'text'")
+        else:
+            media_url = job.get("media_url")
+            if not isinstance(media_url, str) or not media_url.strip():
+                raise ValueError(f"Media outbound job ({msg_type}) requires a non-empty 'media_url'")
+            if msg_type == "document":
+                filename = job.get("filename")
+                if not isinstance(filename, str) or not filename.strip():
+                    raise ValueError("Document outbound job requires a non-empty 'filename'")
+
+        return recipient, msg_type
 
     @staticmethod
     def _meta_message_id(response: dict[str, Any]) -> str | None:
