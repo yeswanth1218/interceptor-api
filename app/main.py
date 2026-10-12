@@ -45,6 +45,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                 OutboundWorker(redis, meta_client, service_settings).run(),
                 name="whatsapp-outbound-worker",
             )
+            app.state.outbound_task = outbound_task
         elif service_settings.outbound_worker_enabled:
             logger.warning(
                 "Outbound worker disabled — META_ACCESS_TOKEN, "
@@ -87,6 +88,16 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Redis unavailable",
             ) from error
+
+        task: Optional[asyncio.Task[None]] = getattr(app.state, "outbound_task", None)
+        if task is not None and task.done():
+            exc = task.exception() if not task.cancelled() else None
+            logger.error("Outbound worker task is dead: %s", exc)
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Outbound worker is not running",
+            )
+
         return {"status": "ok"}
 
     @app.get("/webhooks/meta")
