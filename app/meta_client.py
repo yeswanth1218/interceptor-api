@@ -33,14 +33,19 @@ class MetaWhatsAppClient:
     ) -> None:
         self._client = client
         self._access_token = access_token
-        self._endpoint = (
-            f"https://graph.facebook.com/{graph_api_version}/{phone_number_id}/messages"
-        )
+        self._phone_number_id = phone_number_id
+        self._base_url = f"https://graph.facebook.com/{graph_api_version}"
 
-    async def send_text(self, recipient_phone_e164: str, text: str) -> dict[str, Any]:
+    def _endpoint(self, phone_number_id: str | None) -> str:
+        """Messages endpoint for the sending number; defaults to the configured one."""
+        return f"{self._base_url}/{phone_number_id or self._phone_number_id}/messages"
+
+    async def send_text(
+        self, recipient_phone_e164: str, text: str, phone_number_id: str | None = None
+    ) -> dict[str, Any]:
         """Send a text message through the WhatsApp Cloud API."""
         response = await self._client.post(
-            self._endpoint,
+            self._endpoint(phone_number_id),
             headers={
                 "Authorization": f"Bearer {self._access_token}",
                 "Content-Type": "application/json",
@@ -61,7 +66,13 @@ class MetaWhatsAppClient:
             raise MetaApiError(f"Meta API returned HTTP {response.status_code}: {details}")
         return response.json()
 
-    async def send_image(self, recipient_phone_e164: str, image_url: str, caption: str | None = None) -> dict[str, Any]:
+    async def send_image(
+        self,
+        recipient_phone_e164: str,
+        image_url: str,
+        caption: str | None = None,
+        phone_number_id: str | None = None,
+    ) -> dict[str, Any]:
         """Send an image through the WhatsApp Cloud API using a public URL."""
         payload = {
             "messaging_product": "whatsapp",
@@ -76,7 +87,7 @@ class MetaWhatsAppClient:
             payload["image"]["caption"] = caption
 
         response = await self._client.post(
-            self._endpoint,
+            self._endpoint(phone_number_id),
             headers={
                 "Authorization": f"Bearer {self._access_token}",
                 "Content-Type": "application/json",
@@ -92,7 +103,12 @@ class MetaWhatsAppClient:
         return response.json()
 
     async def send_document(
-        self, recipient_phone_e164: str, document_url: str, filename: str, caption: str | None = None
+        self,
+        recipient_phone_e164: str,
+        document_url: str,
+        filename: str,
+        caption: str | None = None,
+        phone_number_id: str | None = None,
     ) -> dict[str, Any]:
         """Send a document (e.g. PDF) through the WhatsApp Cloud API using a public URL."""
         payload = {
@@ -109,7 +125,7 @@ class MetaWhatsAppClient:
             payload["document"]["caption"] = caption
 
         response = await self._client.post(
-            self._endpoint,
+            self._endpoint(phone_number_id),
             headers={
                 "Authorization": f"Bearer {self._access_token}",
                 "Content-Type": "application/json",

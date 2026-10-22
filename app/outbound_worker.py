@@ -63,11 +63,14 @@ class OutboundWorker:
                 )
                 meta_message_id = f"mock-wamid-{uuid4()}"
             else:
+                # The tenant's number the customer messaged; None falls back to the default.
+                phone_number_id = job.get("phone_number_id")
                 if msg_type == "image":
                     response = await self._meta.send_image(
                         recipient_phone_e164=recipient,
                         image_url=job["media_url"],
                         caption=job.get("text"),
+                        phone_number_id=phone_number_id,
                     )
                 elif msg_type == "document":
                     response = await self._meta.send_document(
@@ -75,9 +78,12 @@ class OutboundWorker:
                         document_url=job["media_url"],
                         filename=job.get("filename", "document.pdf"),
                         caption=job.get("text"),
+                        phone_number_id=phone_number_id,
                     )
                 else:
-                    response = await self._meta.send_text(recipient, job["text"])
+                    response = await self._meta.send_text(
+                        recipient, job["text"], phone_number_id=phone_number_id
+                    )
                 meta_message_id = self._meta_message_id(response)
             logger.info(
                 "Outbound job %s sent%s",
